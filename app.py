@@ -51,10 +51,29 @@ def get_top_ranking_pages(keyword, country="jp", limit=10):
     
     try:
         full_url = f"{url}?{urlencode(params)}"
+        
+        # 🆕【デバッグログ】リクエスト情報を詳細に出力
+        print(f"📤 リクエストURL: {full_url}")
+        print(f"📤 パラメータ: {json.dumps(params, ensure_ascii=False)}")
+        
         response = requests.get(full_url, headers=headers, timeout=30)
+        
+        # 🆕【デバッグログ】レスポンス情報を詳細に出力
+        print(f"📥 ステータスコード: {response.status_code}")
+        print(f"📥 レスポンスボディ (最初の1000文字): {response.text[:1000]}")
         
         if response.status_code == 200:
             data = response.json()
+            
+            # 🆕【デバッグログ】レスポンス構造を確認
+            print(f"📊 レスポンスキー: {list(data.keys())}")
+            if 'positions' in data:
+                print(f"📊 positions配列の長さ: {len(data['positions'])}")
+                if len(data['positions']) > 0:
+                    print(f"📊 最初の要素: {json.dumps(data['positions'][0], ensure_ascii=False, indent=2)}")
+            else:
+                print(f"⚠️  'positions'キーがレスポンスに存在しません")
+                print(f"📊 レスポンス全体: {json.dumps(data, ensure_ascii=False, indent=2)}")
             
             top_urls = []
             if 'positions' in data:
@@ -72,6 +91,14 @@ def get_top_ranking_pages(keyword, country="jp", limit=10):
                             break
             
             print(f"✅ 上位ページ取得完了: {len(top_urls)}件")
+            if len(top_urls) == 0:
+                print(f"⚠️  警告: キーワード「{keyword}」の検索結果が0件でした")
+                print(f"⚠️  考えられる原因:")
+                print(f"   - キーワードがAhrefsデータベースに存在しない")
+                print(f"   - 検索ボリュームが極端に少ない")
+                print(f"   - APIキーの権限が不足している")
+                print(f"   - 国コード「{country}」でのデータが存在しない")
+            
             return top_urls
         
         else:
@@ -81,6 +108,8 @@ def get_top_ranking_pages(keyword, country="jp", limit=10):
     
     except Exception as e:
         print(f"⚠️  上位ページ取得エラー: {e}")
+        import traceback
+        traceback.print_exc()
         return []
 
 
@@ -225,7 +254,10 @@ def extract_cooccurrence():
                 'error': '上位ページが取得できませんでした',
                 'keyword': keyword,
                 'cooccurrence_words': [],
-                'analyzed_pages': 0
+                'analyzed_pages': 0,
+                'debug_info': {
+                    'message': 'Ahrefs APIから0件の結果が返されました。上記のログを確認してください。'
+                }
             }), 500
         
         # 2. 各ページのコンテンツをスクレイピング
