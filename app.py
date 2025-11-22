@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-共起語抽出APIサーバー
+共起語抽出APIサーバー（ValueSERP対応版 - 最終版）
 MeCabを使った形態素解析による真の共起語抽出
+日本語検索最適化、AI Overviewは除外
 """
 
 import os
@@ -21,6 +22,7 @@ CORS(app)
 
 # 環境変数から取得
 AHREFS_API_KEY = os.environ.get("AHREFS_API_KEY", "")
+VALUESERP_API_KEY = os.environ.get("VALUESERP_API_KEY", "")
 
 # MeCabの初期化
 try:
@@ -29,6 +31,133 @@ try:
 except Exception as e:
     print(f"⚠️  MeCab初期化エラー: {e}")
     mecab = None
+
+
+# 国別設定
+COUNTRY_CONFIG = {
+    'jp': {
+        'location': 'Japan',
+        'google_domain': 'google.co.jp',
+        'gl': 'jp',
+        'hl': 'ja'
+    },
+    'us': {
+        'location': 'United States',
+        'google_domain': 'google.com',
+        'gl': 'us',
+        'hl': 'en'
+    },
+    'uk': {
+        'location': 'United Kingdom',
+        'google_domain': 'google.co.uk',
+        'gl': 'uk',
+        'hl': 'en'
+    },
+    'ca': {
+        'location': 'Canada',
+        'google_domain': 'google.ca',
+        'gl': 'ca',
+        'hl': 'en'
+    },
+    'au': {
+        'location': 'Australia',
+        'google_domain': 'google.com.au',
+        'gl': 'au',
+        'hl': 'en'
+    },
+    'de': {
+        'location': 'Germany',
+        'google_domain': 'google.de',
+        'gl': 'de',
+        'hl': 'de'
+    },
+    'fr': {
+        'location': 'France',
+        'google_domain': 'google.fr',
+        'gl': 'fr',
+        'hl': 'fr'
+    },
+    'kr': {
+        'location': 'South Korea',
+        'google_domain': 'google.co.kr',
+        'gl': 'kr',
+        'hl': 'ko'
+    },
+    'cn': {
+        'location': 'China',
+        'google_domain': 'google.com.hk',
+        'gl': 'cn',
+        'hl': 'zh-CN'
+    }
+}
+
+
+def get_top_ranking_pages_valueserp(keyword, country="jp", limit=10):
+    """ValueSERP APIで上位ランキングページを取得（日本語最適化、AI Overview除外）"""
+    print(f"🔍 ValueSERP APIで上位ページを取得中: {keyword}")
+    
+    # 国別設定を取得
+    config = COUNTRY_CONFIG.get(country, COUNTRY_CONFIG['jp'])
+    
+    params = {
+        'api_key': VALUESERP_API_KEY,
+        'q': keyword,
+        'location': config['location'],
+        'google_domain': config['google_domain'],
+        'gl': config['gl'],
+        'hl': config['hl'],
+        'output': 'json',
+        'num': limit,
+        'include_ai_overview': 'false'  # AI Overviewは明示的に除外
+    }
+    
+    try:
+        print(f"📤 リクエストパラメータ: {json.dumps({k: v for k, v in params.items() if k != 'api_key'}, ensure_ascii=False)}")
+        
+        response = requests.get('https://api.valueserp.com/search', params=params, timeout=60)
+        
+        print(f"📥 ステータスコード: {response.status_code}")
+        
+        response.raise_for_status()
+        
+        data = response.json()
+        
+        # デバッグ情報を出力
+        print(f"📊 レスポンスキー: {list(data.keys())}")
+        
+        top_urls = []
+        
+        # ValueSERPのレスポンス構造を確認
+        if data.get('request_info', {}).get('success') == True:
+            if 'organic_results' in data:
+                print(f"📊 organic_results配列の長さ: {len(data['organic_results'])}")
+                
+                for i, result in enumerate(data['organic_results'], 1):
+                    if 'link' in result:
+                        top_urls.append(result['link'])
+                        print(f"  {i}位: {result['link']}")
+                        if len(top_urls) >= limit:
+                            break
+            else:
+                print("⚠️  'organic_results'キーがレスポンスに存在しません")
+        else:
+            print(f"⚠️  APIリクエストが失敗しました: {data.get('request_info', {}).get('message', '不明なエラー')}")
+        
+        print(f"✅ 上位ページ取得完了: {len(top_urls)}件")
+        
+        if len(top_urls) == 0:
+            print(f"⚠️  警告: キーワード「{keyword}」の検索結果が0件でした")
+        
+        return top_urls
+    
+    except requests.exceptions.RequestException as e:
+        print(f"⚠️  ValueSERP API リクエストエラー: {e}")
+        return []
+    except Exception as e:
+        print(f"⚠️  予期せぬエラー: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
 
 
 def get_top_ranking_pages(keyword, country="jp", limit=10):
@@ -52,28 +181,14 @@ def get_top_ranking_pages(keyword, country="jp", limit=10):
     try:
         full_url = f"{url}?{urlencode(params)}"
         
-        # 🆕【デバッグログ】リクエスト情報を詳細に出力
         print(f"📤 リクエストURL: {full_url}")
-        print(f"📤 パラメータ: {json.dumps(params, ensure_ascii=False)}")
         
         response = requests.get(full_url, headers=headers, timeout=30)
         
-        # 🆕【デバッグログ】レスポンス情報を詳細に出力
         print(f"📥 ステータスコード: {response.status_code}")
-        print(f"📥 レスポンスボディ (最初の1000文字): {response.text[:1000]}")
         
         if response.status_code == 200:
             data = response.json()
-            
-            # 🆕【デバッグログ】レスポンス構造を確認
-            print(f"📊 レスポンスキー: {list(data.keys())}")
-            if 'positions' in data:
-                print(f"📊 positions配列の長さ: {len(data['positions'])}")
-                if len(data['positions']) > 0:
-                    print(f"📊 最初の要素: {json.dumps(data['positions'][0], ensure_ascii=False, indent=2)}")
-            else:
-                print(f"⚠️  'positions'キーがレスポンスに存在しません")
-                print(f"📊 レスポンス全体: {json.dumps(data, ensure_ascii=False, indent=2)}")
             
             top_urls = []
             if 'positions' in data:
@@ -83,6 +198,7 @@ def get_top_ranking_pages(keyword, country="jp", limit=10):
                         if isinstance(result_types, str):
                             result_types = [result_types]
                         
+                        # AI Overviewを除外
                         if result_types == ['ai_overview']:
                             continue
                         
@@ -91,14 +207,6 @@ def get_top_ranking_pages(keyword, country="jp", limit=10):
                             break
             
             print(f"✅ 上位ページ取得完了: {len(top_urls)}件")
-            if len(top_urls) == 0:
-                print(f"⚠️  警告: キーワード「{keyword}」の検索結果が0件でした")
-                print(f"⚠️  考えられる原因:")
-                print(f"   - キーワードがAhrefsデータベースに存在しない")
-                print(f"   - 検索ボリュームが極端に少ない")
-                print(f"   - APIキーの権限が不足している")
-                print(f"   - 国コード「{country}」でのデータが存在しない")
-            
             return top_urls
         
         else:
@@ -111,6 +219,28 @@ def get_top_ranking_pages(keyword, country="jp", limit=10):
         import traceback
         traceback.print_exc()
         return []
+
+
+def get_top_ranking_pages_hybrid(keyword, country="jp", limit=10):
+    """Ahrefsを優先し、失敗時にValueSERPにフォールバックする"""
+    
+    # 1. まずAhrefs APIを試す（APIキーが設定されている場合のみ）
+    if AHREFS_API_KEY:
+        print("🔍 Ahrefs APIで試行中...")
+        ahrefs_urls = get_top_ranking_pages(keyword, country, limit)
+        
+        if ahrefs_urls:
+            print("✅ Ahrefs APIで取得成功")
+            return ahrefs_urls, 'ahrefs'
+    
+    # 2. Ahrefsで失敗した場合、またはAPIキーがない場合、ValueSERP APIを呼び出す
+    if VALUESERP_API_KEY:
+        print("⚠️  Ahrefsで結果なし、またはAPIキー未設定。ValueSERPにフォールバックします...")
+        valueserp_urls = get_top_ranking_pages_valueserp(keyword, country, limit)
+        return valueserp_urls, 'valueserp'
+    
+    print("⚠️  エラー: AhrefsとValueSERPの両方のAPIキーが設定されていません")
+    return [], 'none'
 
 
 def scrape_page_content(url, timeout=10):
@@ -224,7 +354,8 @@ def health_check():
     return jsonify({
         'status': 'ok',
         'mecab_available': mecab is not None,
-        'ahrefs_api_configured': bool(AHREFS_API_KEY)
+        'ahrefs_api_configured': bool(AHREFS_API_KEY),
+        'valueserp_api_configured': bool(VALUESERP_API_KEY)
     })
 
 
@@ -241,13 +372,23 @@ def extract_cooccurrence():
         country = data.get('country', 'jp')
         top_pages = data.get('top_pages', 10)
         top_words = data.get('top_words', 50)
+        use_api = data.get('use_api', 'hybrid')  # 'ahrefs', 'valueserp', 'hybrid'
         
         print(f"\n{'='*60}")
         print(f"共起語抽出リクエスト: {keyword}")
+        print(f"使用API: {use_api}")
+        print(f"取得ページ数: 1〜{top_pages}位")
         print(f"{'='*60}\n")
         
         # 1. 上位ページのURL取得
-        top_urls = get_top_ranking_pages(keyword, country, top_pages)
+        if use_api == 'valueserp':
+            top_urls = get_top_ranking_pages_valueserp(keyword, country, top_pages)
+            api_used = 'valueserp'
+        elif use_api == 'ahrefs':
+            top_urls = get_top_ranking_pages(keyword, country, top_pages)
+            api_used = 'ahrefs'
+        else:  # hybrid
+            top_urls, api_used = get_top_ranking_pages_hybrid(keyword, country, top_pages)
         
         if not top_urls:
             return jsonify({
@@ -255,8 +396,9 @@ def extract_cooccurrence():
                 'keyword': keyword,
                 'cooccurrence_words': [],
                 'analyzed_pages': 0,
+                'api_used': api_used,
                 'debug_info': {
-                    'message': 'Ahrefs APIから0件の結果が返されました。上記のログを確認してください。'
+                    'message': 'APIから0件の結果が返されました。上記のログを確認してください。'
                 }
             }), 500
         
@@ -281,7 +423,8 @@ def extract_cooccurrence():
                 'error': 'コンテンツが取得できませんでした',
                 'keyword': keyword,
                 'cooccurrence_words': [],
-                'analyzed_pages': 0
+                'analyzed_pages': 0,
+                'api_used': api_used
             }), 500
         
         print(f"\n✅ {len(texts)}ページのコンテンツ取得完了")
@@ -306,7 +449,8 @@ def extract_cooccurrence():
             'cooccurrence_string': result_str,
             'analyzed_pages': len(texts),
             'top_urls': top_urls,
-            'mecab_used': mecab is not None
+            'mecab_used': mecab is not None,
+            'api_used': api_used
         })
     
     except Exception as e:
@@ -318,10 +462,13 @@ def extract_cooccurrence():
 
 if __name__ == '__main__':
     print("\n" + "="*60)
-    print("共起語抽出APIサーバー起動中...")
+    print("共起語抽出APIサーバー起動中（最終版）...")
     print("="*60)
     print(f"MeCab: {'✅ 利用可能' if mecab else '⚠️  利用不可'}")
     print(f"Ahrefs API: {'✅ 設定済み' if AHREFS_API_KEY else '⚠️  未設定'}")
+    print(f"ValueSERP API: {'✅ 設定済み' if VALUESERP_API_KEY else '⚠️  未設定'}")
+    print(f"対応国数: {len(COUNTRY_CONFIG)}ヶ国")
+    print(f"AI Overview: ❌ 除外（通常の検索結果のみ）")
     print("="*60 + "\n")
     
     app.run(host='0.0.0.0', port=5000, debug=False)
